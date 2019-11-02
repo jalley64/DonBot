@@ -5,6 +5,7 @@ const client = new Discord.Client();
 const auth = require('./auth.json');
 var _signedUpUsers = ["<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>"];
 var _livingPlayers = [];
+var _yetToVote = [];
 var _playerRoles = {};
 var _deadPlayers = [];
 var _isGame = false;
@@ -13,13 +14,21 @@ var _wolves = [];
 var _seer = "";
 var _angel = "";
 var _vigilante = "";
+var _gameDay = 0;
 var _isDay = true;
 var _signupsStarted = false;
 var _playercount = 13;
 //whenever adding to this list, add to end game reset
-var _votehistory = {};
-var _daycount;
+var _fullVoteHistory = {};
+var _activeVoteHistory = {};
+var _voteTallyPostIds = [];
+var _majority = 0;
 
+if (!Array.prototype.last){
+    Array.prototype.last = function(){
+        return this[this.length - 1];
+    };
+};
 
 // still need to add these above to end game
 client.on('ready', () => {
@@ -37,13 +46,13 @@ client.on('message', msg => {
             message = "!startsignups";
         }
 
-        if (message.startsWith("!cancelsignup") || message.startsWith("!lynch") || message.startsWith("!signup")){ //add mod check and logic to prevent other users from removing people
+        if (message.startsWith("!cancelsignup") || message.startsWith("!vote") || message.startsWith("!signup")){ //add mod check and logic to prevent other users from removing people
             var msgParts = message.split(" ");
             if (msgParts.length > 1){
                 userID = msgParts[1];
                 message = msgParts[0];
             }
-            else if (message.startsWith("!lynch")){
+            else if (message.startsWith("!vote")){
                 msg.reply("You must specify a player to lynch.");
             }
         }
@@ -57,7 +66,7 @@ client.on('message', msg => {
                cancelSignUp(userID, msg);
                break;
             case '!rollcall': //modonly
-                printPlayers(msg);
+                printPlayers(msg, true);
                 break;  
             case '!startsignups':
                 tryStartSignups(msg, longMessage);
@@ -72,15 +81,91 @@ client.on('message', msg => {
             case '!endgame':
                 endGame(msg);
                 break;
-            case '!lynch':
-                applyVote(msg);
+            case '!vote':
+                applyVote(msg, userID);
                 break;
          }
      }
   });
 
-function applyVote(msg){
+function applyVote(msg, userID){
+    if (!_livingPlayers.includes(userID)){
+       
+        msg.reply("He's not playing fuckface. Don't waste my time.");
+        return;
+    }
 
+    var authorID = "<@" + msg.author.id + ">";
+    if (!_livingPlayers.includes(authorID)){
+        console.log(msg.author);
+        msg.reply("You're not playing fuckface. Don't waste my time.");
+        return;
+    }
+
+    if (_yetToVote.includes(authorID)){
+        _yetToVote.splice(_yetToVote.indexOf(authorID),1);
+    }
+
+    if(authorID in _voteTally){
+        var formerTarget = _voteTally[authorID];
+        if (formerTarget == userID){
+            msg.reply ("You already voted for that user. Don't waste my time.");
+            return;
+        }
+
+        var authorsActiveVoteIndex = _fullVoteHistory[formerTarget].indexOf(authorID);
+        _fullVoteHistory[formerTarget][authorsActiveVoteIndex] = "(" + authorID + ")";
+
+        authorsActiveVoteIndex = _activeVoteHistory[formerTarget].indexOf(authorID);
+        _activeVoteHistory[formerTarget].splice(authorsActiveVoteIndex, 1);
+    }
+
+    _voteTally[authorID] = userID;
+    if (!(userID in _fullVoteHistory)){
+        _fullVoteHistory[userID] = [];
+        _activeVoteHistory[userID] = [];
+    }
+
+    _fullVoteHistory[userID].push(authorID);
+    _activeVoteHistory[userID].push(authorID);
+    updateVoteTally(msg);
+    var voteCount = _activeVoteHistory[userID].length;
+    if ( voteCount >= _majority){
+        //start 8 hour countdown
+
+        //end day
+        endDay(msg);
+    }
+    else{
+        var remainingVotes = _majority - voteCount;
+        msg.reply("Got it. " + remainingVotes + " votes to send em to the gallows.");
+    }
+}
+
+function endDay(msg){
+
+}
+
+function updateVoteTally(msg){
+    console.log(_activeVoteHistory);
+    console.log(_fullVoteHistory);
+    var id = _voteTallyPostIds.last();
+    var voteStr = "Day " + _gameDay + " Vote Tally:\n";
+    for (var element in _fullVoteHistory){
+        console.log(element);
+        voteStr += element + " - " + _activeVoteHistory[element].length + " - ";
+        var history = _fullVoteHistory[element];
+        _fullVoteHistory[element].forEach(function(vote){
+            voteStr += vote + ", ";
+        });
+
+        voteStr = voteStr.slice(0, -2); 
+        voteStr += "\n";
+    }
+
+    msg.channel.fetchMessage(id).then(message => {
+        message.edit(voteStr);
+    })
 }
 
 function startGame(msg){
@@ -91,21 +176,40 @@ function startGame(msg){
     else{
         //print game is starting
         _isGame = true;
-        _livingPlayers = _signedUpUsers;
-        
+        _livingPlayers = Array.from(_signedUpUsers);
         //generate roles
-        generateRoles();
+        generateRoles();    
         //send out pms
         pmRoles();
         //print rules
-        var rules = GameStrings.GetDay1Rules(_signedUpUsers);
+        var rules = GameStrings.GetDay1Rules(_signedUpUsers.length);
         msg. reply(rules);
-        printPlayers(msg);
+        nextDay(msg);
     }
 }
 
-function startDay(msg){
+function nextDay(msg){
+    _gameDay++;
+    var dayString = "**Day " + _gameDay + " **\n";
+    dayString += "\n" + printPlayers(false);
+    dayString += "\n" + printPlayers(true);
+    _majority = Math.floor((_livingPlayers.length / 2) + 1);
+    dayString +="\nThe day phase is about to begin. There are " + _livingPlayers.length + " players. " + _majority + " votes needed for majority.";
+    
+    msg.reply(dayString).then(sent => {
+        sent.pin();
+    });;
+    _yetToVote = Array.from(_livingPlayers);
+    createAndPinVoteTally(msg);
+    //start 24 hour timer
+    _voteTally = {};
+}
 
+function createAndPinVoteTally(msg){
+    msg.reply("Day " + _gameDay + " Vote Tally").then(sent => { // 'sent' is that message you just sent
+        _voteTallyPostIds.push(sent.id);    
+        sent.pin();
+});
 }
 
 function pmRoles(){
@@ -158,11 +262,11 @@ function generateRoles(){
         _signedUpUsers.splice(wolfIndex,1);
     }
 
-   /* _signedUpUsers.forEach(function(user){
+    _signedUpUsers.forEach(function(user){
         _playerRoles[user] = "Villager";
-    }) */
+    }); 
 
-    _signedUpUsers = _livingPlayers;
+    _signedUpUsers = Array.from(_livingPlayers);
 }
 
 function getRandomInt(min, max) {
@@ -218,11 +322,12 @@ function endGame(msg){
     _signupsStarted = false;
     _playercount = 13;
     unPinLastGameMessages(msg.channel);
-    msg.reply("The games ova. Now start another one ya jabroni.");
+    var message = msg.reply("The games ova. Now start another one ya jabroni.");
+    console.log("message: " + message.id);
 }//modonly
 
 function unPinLastGameMessages(channel){
-    var thisthing = channel.fetchPinnedMessages().then(function(resp){
+    channel.fetchPinnedMessages().then(function(resp){
         resp.forEach(element => {
             ///TODO: add protection for rules to not get unpinned
             element.unpin();
@@ -251,14 +356,41 @@ function signUpUser(userID, msg){
     }
 }//modonly
 
-function printPlayers(msg){
+function printPlayers(isLiving){
     var playerString = "";
     if(_signupsStarted){
         if (_isGame){
-            playerString = "**Current Living Players**\n"
-            _livingPlayers.forEach(function(element){
-                playerString += element + "\n";
-            });
+            if (isLiving){
+                playerString = "**Current Living Players**\n"
+                _livingPlayers.forEach(function(element){
+                    playerString += element + "\n";
+                });        
+            }
+            else{
+                playerString = "**Current Dead Players**\n"
+                _deadPlayers.forEach(function(element){
+                    playerString += element;
+                    switch(_playerRoles[element]){
+                        case "Seer":
+                            playerString += "= **Seer**";
+                            break;
+                        case "Vigilante":
+                            playerString += "= **Vigilante**";
+                            break;
+                        case "Wolf":
+                            playerString += "= **Wolf**";
+                            break;
+                        case "Angel":
+                            playerString += "= **Angel**";
+                            break;
+                        case "Villager":
+                            playerString += "= Villager";
+                            break;
+                    }
+
+                    playerString += "\n";
+                });
+            }
         }
         else{
             playerString = "**Current Signed Up Players**\n"
@@ -271,7 +403,7 @@ function printPlayers(msg){
         playerString = "Signups aint started yet boss man!";
     }
 
-    msg.reply(playerString);
+    return playerString;
 }
 
   
