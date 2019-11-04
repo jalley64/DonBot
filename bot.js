@@ -3,7 +3,13 @@ const GameStrings = require("./GameStrings");
 const Discord = require('discord.js');
 const client = new Discord.Client();
 const auth = require('./auth.json');
-var _signedUpUsers = ["<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>","<@250667798076850177>"];
+var _signedUpUsers = ["<@250667798076850177>",
+    "<@640714466828353558>",   
+    "<@640715566935572482>",
+    "<@640716364042207242>",
+    "<@640716950418358272>",
+    "<@640717881402720277>",
+    "<@640718554785906694>"];
 var _livingPlayers = [];
 var _yetToVote = [];
 var _playerRoles = {};
@@ -15,6 +21,10 @@ var _seer = "";
 var _angel = "";
 var _vigilante = "";
 var _gameDay = 0;
+var _angelTarget = "";
+var _seerTarget = "";
+var _wolfTarget = "";
+var _vigTarget = "";
 var _isDay = true;
 var _signupsStarted = false;
 var _playercount = 13;
@@ -23,6 +33,15 @@ var _fullVoteHistory = {};
 var _activeVoteHistory = {};
 var _voteTallyPostIds = [];
 var _majority = 0;
+var _seerhistory = [];
+var _angelHistory = [];
+var _vigHistory = [];
+var _wolfHistory = [];
+var _isSeerDead = false;
+var _isAngelDead = false;
+var _isVigDead = false;
+var _doesVigHaveBullet = false;
+
 
 if (!Array.prototype.last){
     Array.prototype.last = function(){
@@ -66,7 +85,7 @@ client.on('message', msg => {
                cancelSignUp(userID, msg);
                break;
             case '!rollcall': //modonly
-                printPlayers(msg, true);
+                msg.reply(printPlayers(msg, true));
                 break;  
             case '!startsignups':
                 tryStartSignups(msg, longMessage);
@@ -90,7 +109,6 @@ client.on('message', msg => {
 
 function applyVote(msg, userID){
     if (!_livingPlayers.includes(userID)){
-       
         msg.reply("He's not playing fuckface. Don't waste my time.");
         return;
     }
@@ -134,7 +152,7 @@ function applyVote(msg, userID){
         //start 8 hour countdown
 
         //end day
-        endDay(msg);
+        endDay(msg, userID);
     }
     else{
         var remainingVotes = _majority - voteCount;
@@ -142,7 +160,72 @@ function applyVote(msg, userID){
     }
 }
 
-function endDay(msg){
+function endDay(msg, userID){
+    var role = _playerRoles[userID];
+    _livingPlayers.splice(_livingPlayers.indexOf(userID), 1);
+    _deadPlayers.push(userID);
+    checkForSpecialDeath(userID);
+    var endDayStr = "**Day " + _gameDay + "**\n\n";
+    var roleArticle = role == "Villager" ? "a" : "the";
+    endDayStr += "After much deliberation, the village has reached a verdict. Goodbye " + userID + ".\n";
+    endDayStr += userID + " is " + roleArticle + "  **" + role + "**.";
+    endDayStr += printPlayers(false);
+    endDayStr += printPlayers(true);
+    endDayStr += "\nSpecials have 24 hours to get me their action.";
+    if (_gameDay % 2 == 0)
+    {
+        _doesVigHaveBullet = true;
+    }
+
+    if ( _doesVigHaveBullet && !_isVigDead){
+        endDayStr += "\nThe Vig has a shot tonight.";
+    }
+    else if (!_isVigDead){
+        endDayStr += "\nThe vig does not have a bullet tonight.";
+    }
+
+    msg.reply(endDayStr);
+}
+
+function checkForSpecialDeath(userID){
+    var role = _playerRoles[userID];
+    if (role == "Seer"){
+        _isSeerDead = true;
+    }
+
+    if (role == "Vigilante"){
+        _isVigDead = true;
+    }
+
+    if (role == "Angel"){
+        _isAngelDead = true;
+    }
+}
+
+function isNightComplete(){
+    if(_doesVigHaveBullet && !_isVigDead){
+        if (_vigTarget == "")
+        {
+            return false;
+        }
+    }
+
+    if(!_isAngelDead && _angelTarget == ""){
+        return false;
+    }
+    
+    if(!_isSeerDead && _seerTarget == ""){
+        return false;
+    }
+
+    if (_wolfTarget == ""){
+        return false;
+    }
+
+    return true;
+}
+
+function endNight(){
 
 }
 
@@ -203,6 +286,14 @@ function nextDay(msg){
     createAndPinVoteTally(msg);
     //start 24 hour timer
     _voteTally = {};
+    resetSpecialTargets();
+}
+
+function resetSpecialTargets() {
+    _angelTarget = "";
+    _seerTarget = "";
+    _wolfTarget = "";
+    _vigTarget = "";
 }
 
 function createAndPinVoteTally(msg){
@@ -254,7 +345,7 @@ function generateRoles(){
     _playerRoles[_vigilante] = "Vigilante";
     _signedUpUsers.splice(vigIndex,1);
 
-    for (var i = 0; i < 1; i++){
+    for (var i = 0; i < 3; i++){
         var wolfIndex = getRandomInt(0, _signedUpUsers.length - 1);
         var wolf = _signedUpUsers[wolfIndex];
         _wolves.push(wolf);
@@ -267,6 +358,7 @@ function generateRoles(){
     }); 
 
     _signedUpUsers = Array.from(_livingPlayers);
+    console.log(_playerRoles);
 }
 
 function getRandomInt(min, max) {
@@ -336,6 +428,7 @@ function unPinLastGameMessages(channel){
 }
 
 function signUpUser(userID, msg){
+    console.log(userID);
     if (!_signupsStarted){
         msg.reply("Signups aint open yet fuck face!");
         return;
